@@ -52,7 +52,7 @@ class ImageSequence(keras.utils.Sequence):
         return int(numpy.floor(self.count / self.batch_size))
 
     def __getitem__(self, idx):
-        X = numpy.zeros((self.batch_size, self.captcha_height, self.captcha_width, 3), dtype=numpy.float32)
+        X = numpy.zeros((self.batch_size, self.captcha_height, self.captcha_width, 1), dtype=numpy.float32)
         y = [numpy.zeros((self.batch_size, len(self.captcha_symbols)), dtype=numpy.uint8) for i in range(self.captcha_length)]
 
 
@@ -61,15 +61,19 @@ class ImageSequence(keras.utils.Sequence):
                 self.files= self.files_copy
             random_image_label = random.choice(list(self.files.keys()))
             random_image_file = self.files[random_image_label]
+            result ={}
+            result = encode_single_sample(os.path.join(self.directory_name, random_image_file), random_image_label, self.captcha_height, self.captcha_width)
 
             # We've used this image now, so we can't repeat it in this iteration
             self.used_files.append(self.files.pop(random_image_label))
 
             # We have to scale the input pixel values to the range [0, 1] for
             # Keras so we divide by 255 since the image is 8-bit RGB
-            raw_data = cv2.imread(os.path.join(self.directory_name, random_image_file))
-            rgb_data = cv2.cvtColor(raw_data, cv2.COLOR_BGR2RGB)
-            processed_data = numpy.array(rgb_data) / 255.0
+            # raw_data = cv2.imread(os.path.join(self.directory_name, random_image_file))
+            rgb_data = result.get("image")
+            # processed_data = numpy.array(rgb_data) / 255.0
+            processed_data = numpy.array(rgb_data)
+
             X[i] = processed_data
 
             # We have a little hack here - we save captchas as TEXT_num.png if there is more than one captcha with the text "TEXT"
@@ -144,7 +148,7 @@ def main():
     # with tf.device('/device:GPU:0'):
     with tf.device('/device:CPU:0'):
     # with tf.device('/device:XLA_CPU:0'):
-        model = create_model(args.length, len(captcha_symbols), (args.height, args.width, 3))
+        model = create_model(args.length, len(captcha_symbols), (args.height, args.width, 1))
 
         if args.input_model is not None:
             model.load_weights(args.input_model)
@@ -175,6 +179,23 @@ def main():
         except KeyboardInterrupt:
             print('KeyboardInterrupt caught, saving current weights as ' + args.output_model_name+'_resume.h5')
             model.save_weights(args.output_model_name+'_resume.h5')
+
+def encode_single_sample(img_path, label, img_height, img_width):
+    # 1. Read image
+    img = tf.io.read_file(img_path)
+    # 2. Decode and convert to grayscale
+    img = tf.io.decode_png(img, channels=1)
+    # 3. Convert to float32 in [0, 1] range
+    img = tf.image.convert_image_dtype(img, tf.float32)
+    # 4. Resize to the desired size
+    img = tf.image.resize(img, [img_height, img_width])
+    # 5. Transpose the image because we want the time
+    # dimension to correspond to the width of the image.
+    # img = tf.transpose(img, perm=[1, 0, 2])
+    # 6. Map the characters in utf8
+    label = tf.strings.unicode_split(label, input_encoding="UTF-8")
+    # 7. Return a dict as our model is expecting two inputs
+    return {"image": img, "label": label}
 
 if __name__ == '__main__':
     main()
